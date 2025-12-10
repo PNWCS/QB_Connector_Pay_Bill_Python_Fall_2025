@@ -2,3 +2,7 @@ __pycache__/
 **/__pycache__/
 dist/
 build/
+poetry.lock
+.~lock.company_data.xlsx#
+/src/report.json
+*.log

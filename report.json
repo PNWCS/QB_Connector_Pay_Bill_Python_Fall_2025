@@ -1,0 +1,17 @@
+{
+  "same_records_count": 1,
+  "conflicts": [
+    {
+      "type": "data_mismatch",
+      "excel_id": "44783-46191",
+      "qb_id": "44783-46191",
+      "excel_date": "2024-03-22T00:00:00",
+      "qb_date": "2024-03-22T00:00:00",
+      "excel_amount": 14000.0,
+      "qb_amount": 145500.0,
+      "excel_vendor": "ATT(cell phone)",
+      "qb_vendor": "ATT(cell phone)"
+    }
+  ],
+  "added_bill_payments": []
+}

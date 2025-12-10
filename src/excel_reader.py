@@ -1,0 +1,171 @@
+"""Excel extraction helpers for account debit worksheets."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import List
+
+from openpyxl import load_workbook
+
+from .models import BillPayment
+
+from datetime import datetime, date as _date, timedelta
+
+
+def _normalize(h: object) -> str:
+    return str(h).strip() if h is not None else ""
+
+
+def _read_account_debit_sheet(
+    workbook_path: Path, sheet_name: str
+) -> List[BillPayment]:
+    # print(f"debug: {workbook_path}, sheet: {sheet_name}")  # DEBUG DELETE ME
+    workbook_path = Path(workbook_path)
+    if not workbook_path.exists():
+        raise FileNotFoundError(f"Workbook not found: {workbook_path}")
+
+    wb = load_workbook(filename=workbook_path, read_only=True, data_only=True)
+    try:
+        try:
+            ws = wb[sheet_name]
+        except KeyError as exc:
+            raise ValueError(f"Worksheet '{sheet_name}' not found in workbook") from exc
+
+        rows = ws.iter_rows(values_only=True)
+        header_row = next(rows, None)
+        if header_row is None:
+            print("no header row found")
+            return []
+
+        headers = [_normalize(h) for h in header_row]
+        index = {h.lower(): i for i, h in enumerate(headers)}
+
+        def _get(row: tuple, *names: str):
+            for name in names:
+                idx = index.get(name.lower())
+                if idx is not None and idx < len(row):
+                    return row[idx]
+            return None
+
+        payments: List[BillPayment] = []
+        for row in rows:
+            # Parent ID - Child ID -> take only parent (left of " - ")
+            parent_id = _get(row, "Parent ID")
+            child_id = _get(row, "Child ID")
+
+            parent_str = ""
+            if parent_id not in (None, ""):
+                parent_str = str(parent_id).strip()
+                # Concatenate with child if child exists
+                if child_id not in (None, ""):
+                    child_str = str(child_id).strip()
+                    parent_str = f"{parent_str}-{child_str}"
+
+            bank_date = _get(row, "Bank Date")
+            check_amount = _get(row, "Check Amount")
+            if (
+                _get(row, "Comments") == "Shipping Charge"
+                or _get(row, "Comments") == "Shipping Charges"
+            ):
+                print("shipping charge skipped")
+                continue  # skip shipping charges
+
+            # Require amount to create a payment
+            if check_amount in (None, ""):
+                continue
+
+            # convert amount
+            try:
+                amount_value = float(str(check_amount).strip())
+            except (ValueError, TypeError):
+                continue
+
+            # date = _normalize(bank_date)
+            date = None
+            if isinstance(bank_date, _date):
+                date = bank_date
+            elif isinstance(bank_date, datetime):
+                date = bank_date.date()
+            elif isinstance(bank_date, (int, float)):
+                try:
+                    excel_epoch = datetime(1899, 12, 30)
+                    date = (excel_epoch + timedelta(days=int(bank_date))).date()
+                except Exception:
+                    date = None
+            else:
+                s = _normalize(bank_date)
+                if s:
+                    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
+                        try:
+                            date = datetime.strptime(s, fmt).date()
+                            break
+                        except ValueError:
+                            continue
+
+            if date is None:
+                continue
+
+            supplier_name = _get(row, "Supplier Name", "Supplier")
+            sname = _normalize(supplier_name).upper()
+            mapping = {
+                "A": "ATT(cell phone)",
+                "B": "Caps 'N Plugs",
+                "C": "Chase/GM Credit (BP)",
+                "D": "Citi Card - COSTCO",
+            }
+            translated_vendor = mapping.get(sname)
+            if translated_vendor is None:
+                continue
+
+            payments.append(
+                BillPayment(
+                    source="excel",
+                    id=parent_str,
+                    date=date,
+                    amount_to_pay=amount_value,
+                    vendor=translated_vendor,
+                )
+            )
+
+        return payments
+    finally:
+        wb.close()
+
+
+def extract_account_debit_vendor(workbook_path: Path) -> List[BillPayment]:
+    """Read 'account debit vendor' and return BillPayment list using parent id and default bank."""
+    return _read_account_debit_sheet(workbook_path, "account debit vendor")
+
+
+def extract_account_debit_nonvendor(workbook_path: Path) -> List[BillPayment]:
+    """Read 'account debit nonvendor' and return BillPayment list using parent id and default bank."""
+    return _read_account_debit_sheet(workbook_path, "account debit nonvendor")
+
+
+__all__ = [
+    "extract_account_debit_vendor",
+    "extract_account_debit_nonvendor",
+]
+
+
+if __name__ == "__main__":  # pragma: no cover - manual invocation
+    import sys
+
+    try:
+        wb = Path("company_data.xlsx")
+        vendor_rows = extract_account_debit_vendor(wb)
+        nonvendor_rows = extract_account_debit_nonvendor(wb)
+
+        print(f"Vendor rows: {len(vendor_rows)}")
+        for p in vendor_rows[:10]:
+            print(p)
+
+        print(f"\nNon-vendor rows: {len(nonnvendor_rows := nonvendor_rows)}")
+        for p in nonnvendor_rows[:10]:
+            print(p)
+    except Exception as e:
+        print(f"Error: {e}")
+        print(
+            "Usage: python src/excel_reader.py (run from project root where company_data.xlsx lives)"
+        )
+        sys.exit(1)
